@@ -1,8 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
 
-import '../core/app_export.dart';
-import '../widgets/custom_error_widget.dart';
+import './widgets/custom_error_widget.dart';
+import 'core/app_export.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,52 +13,86 @@ void main() async {
   ErrorWidget.builder = (FlutterErrorDetails details) {
     if (!hasShownError) {
       hasShownError = true;
-
-      // Reset flag after 3 seconds to allow error widget on new screens
-      Future.delayed(Duration(seconds: 5), () {
+      Future.delayed(const Duration(seconds: 5), () {
         hasShownError = false;
       });
-
       return CustomErrorWidget(errorDetails: details);
     }
-    return SizedBox.shrink();
+    return const SizedBox.shrink();
   };
 
   // 🚨 CRITICAL: Device orientation lock - DO NOT REMOVE
-  Future.wait([
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
-  ]).then((value) {
-    GoRouter.optionURLReflectsImperativeAPIs = true;
-    runApp(MyApp());
-  });
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  GoRouter.optionURLReflectsImperativeAPIs = true;
+  runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+
+  void _toggleTheme() {
+    setState(() {
+      _themeMode = _themeMode == ThemeMode.light
+          ? ThemeMode.dark
+          : ThemeMode.light;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Sizer(
       builder: (context, orientation, screenType) {
-        return MaterialApp.router(
-          title: 'taskscheduler',
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: ThemeMode.light,
-          // 🚨 CRITICAL: NEVER REMOVE OR MODIFY
-          builder: (context, child) {
-            return MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(textScaler: TextScaler.linear(1.0)),
-              child: child!,
-            );
-          },
-          // 🚨 END CRITICAL SECTION
-          debugShowCheckedModeBanner: false,
-          routerConfig: appRouter,
+        return ThemeModeNotifier(
+          themeMode: _themeMode,
+          onToggle: _toggleTheme,
+          child: MaterialApp.router(
+            title: 'Task Scheduler',
+            theme: AppTheme.lightTheme,
+            darkTheme: AppTheme.darkTheme,
+            themeMode: _themeMode,
+            // 🚨 CRITICAL: NEVER REMOVE OR MODIFY
+            builder: (context, child) {
+              return MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(1.0)),
+                child: child!,
+              );
+            },
+            // 🚨 END CRITICAL SECTION
+            debugShowCheckedModeBanner: false,
+            routerConfig: appRouter,
+          ),
         );
       },
     );
+  }
+}
+
+class ThemeModeNotifier extends InheritedWidget {
+  final ThemeMode themeMode;
+  final VoidCallback onToggle;
+
+  const ThemeModeNotifier({
+    super.key,
+    required this.themeMode,
+    required this.onToggle,
+    required super.child,
+  });
+
+  static ThemeModeNotifier? of(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<ThemeModeNotifier>();
+  }
+
+  @override
+  bool updateShouldNotify(ThemeModeNotifier oldWidget) {
+    return themeMode != oldWidget.themeMode;
   }
 }
