@@ -1,201 +1,98 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../models/message_model.dart';
 
-class YouTubeVideo {
-  final String videoId;
-  final String title;
-  final String channelTitle;
-  final String thumbnailUrl;
-  final String description;
+class OpenRouterService {
+  static const String _baseUrl =
+      'https://openrouter.ai/api/v1/chat/completions';
+  static const String _model =
+      'baidu/cobuddy:free';
+  static const String _apiKey = String.fromEnvironment('OPENROUTER_API_KEY');
 
-  const YouTubeVideo({
-    required this.videoId,
-    required this.title,
-    required this.channelTitle,
-    required this.thumbnailUrl,
-    required this.description,
-  });
+  static const String systemPrompt =
+      '''You are a smart, conversational AI timetable planner — like a blend of ChatGPT and Motion AI. Your job is to help users build a personalized daily schedule.
 
-  String get youtubeUrl => 'https://www.youtube.com/watch?v=$videoId';
+Start by warmly greeting the user and asking about their goals for today or the week. Through natural conversation, gather:
+- What subjects/tasks they need to work on
+- How much time they have available
+- Their energy levels and focus patterns
+- Any deadlines or priorities
+- Preferred break frequency
 
-  factory YouTubeVideo.fromMap(Map<String, dynamic> map) {
-    final snippet = map['snippet'] as Map<String, dynamic>? ?? {};
-    final thumbnails = snippet['thumbnails'] as Map<String, dynamic>? ?? {};
-    final medium =
-        (thumbnails['medium'] ?? thumbnails['default'])
-            as Map<String, dynamic>? ??
-        {};
-    final idMap = map['id'] as Map<String, dynamic>? ?? {};
+Ask one or two questions at a time — keep it natural and conversational. DO NOT ask a long list of questions at once.
 
-    return YouTubeVideo(
-      videoId: idMap['videoId'] as String? ?? '',
-      title: snippet['title'] as String? ?? 'Untitled',
-      channelTitle: snippet['channelTitle'] as String? ?? '',
-      thumbnailUrl: medium['url'] as String? ?? '',
-      description: snippet['description'] as String? ?? '',
-    );
+When you have gathered enough information (usually after 4-6 exchanges), generate a timetable in this EXACT JSON format only — no other text, no markdown, just the raw JSON array:
+
+[
+  {
+    "title": "Task Name",
+    "description": "Brief description of what to do",
+    "category": "Study",
+    "startTime": "HH:MM",
+    "endTime": "HH:MM",
+    "day": "Monday"
   }
-}
+]
 
-class YouTubeService {
-  static const String _baseUrl = 'https://www.googleapis.com/youtube/v3/search';
-  static const String _apiKey = String.fromEnvironment('YOUTUBE_API_KEY');
+Categories must be one of: Study, Workout, Work, Personal, Other.
+Times must be in 24-hour HH:MM format.
+Day must be the full day name (Monday, Tuesday, etc.) or "Today".
 
-  Future<List<YouTubeVideo>> searchVideos(
-    String query, {
-    int maxResults = 12,
-  }) async {
-    try {
-      final uri = Uri.parse(_baseUrl).replace(
-        queryParameters: {
-          'part': 'snippet',
-          'q': query,
-          'type': 'video',
-          'maxResults': maxResults.toString(),
-          'key': _apiKey,
-          'safeSearch': 'strict',
-        },
-      );
+IMPORTANT: Only output the JSON array when you are ready to generate the timetable. All other responses must be plain conversational text. Never output JSON during the conversation phase.''';
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+  /// Send a message using standard http.post (no streaming).
+  /// Returns the AI response string or throws a descriptive error.
+  Future<String> sendMessage(List<MessageModel> messages) async {
+    final apiMessages = <Map<String, dynamic>>[
+      {'role': 'system', 'content': systemPrompt},
+      ...messages
+          .where((m) => m.role != MessageRole.system)
+          .map((m) => m.toApiMap()),
+    ];
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final items = data['items'] as List<dynamic>? ?? [];
-        return items
-            .map((item) => YouTubeVideo.fromMap(item as Map<String, dynamic>))
-            .where((v) => v.videoId.isNotEmpty)
-            .toList();
+    final response = await http
+        .post(
+          Uri.parse(_baseUrl),
+          headers: {
+            'Authorization': 'Bearer $_apiKey',
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://taskschedu6442.builtwithrocket.new',
+            'X-Title': 'Task Scheduler',
+          },
+          body: jsonEncode({
+            'model': _model,
+            'messages': apiMessages,
+            'stream': false,
+            'max_tokens': 2000,
+            'temperature': 0.7,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    // Debug logging
+    print('[OpenRouter] Status: ${response.statusCode}');
+    print('[OpenRouter] Body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final choices = data['choices'] as List<dynamic>?;
+      if (choices != null && choices.isNotEmpty) {
+        final content = choices[0]['message']['content'] as String? ?? '';
+        return content;
       }
-      return [];
-    } catch (_) {
-      return [];
+      throw Exception('No choices in response');
+    } else if (response.statusCode == 401) {
+      throw Exception(
+        '401: Invalid API Key. Please check your OpenRouter key.',
+      );
+    } else if (response.statusCode == 429) {
+      throw Exception('429: Quota exceeded. Please wait and try again.');
+    } else if (response.statusCode == 400) {
+      throw Exception('400: Invalid request. ${response.body}');
+    } else if (response.statusCode == 500) {
+      throw Exception('500: OpenRouter server error. Try again later.');
+    } else {
+      throw Exception('HTTP ${response.statusCode}: ${response.reasonPhrase}');
     }
   }
-}
-
-// Static fallback videos for when API is unavailable
-class FallbackVideos {
-  static List<YouTubeVideo> studyMath() => [
-    const YouTubeVideo(
-      videoId: 'OmJ-4B-mS-Y',
-      title: 'Algebra Basics: What Is Algebra?',
-      channelTitle: 'Math Antics',
-      thumbnailUrl: 'https://i.ytimg.com/vi/OmJ-4B-mS-Y/mqdefault.jpg',
-      description: 'Learn algebra fundamentals',
-    ),
-    const YouTubeVideo(
-      videoId: 'NybHckSEQBI',
-      title: 'Calculus 1 - Full College Course',
-      channelTitle: 'freeCodeCamp.org',
-      thumbnailUrl: 'https://i.ytimg.com/vi/NybHckSEQBI/mqdefault.jpg',
-      description: 'Complete calculus course',
-    ),
-    const YouTubeVideo(
-      videoId: 'WUvTyaaNkzM',
-      title: 'The Map of Mathematics',
-      channelTitle: 'Domain of Science',
-      thumbnailUrl: 'https://i.ytimg.com/vi/WUvTyaaNkzM/mqdefault.jpg',
-      description: 'Overview of all mathematics',
-    ),
-  ];
-
-  static List<YouTubeVideo> studyCoding() => [
-    const YouTubeVideo(
-      videoId: 'rfscVS0vtbw',
-      title: 'Learn Python - Full Course for Beginners',
-      channelTitle: 'freeCodeCamp.org',
-      thumbnailUrl: 'https://i.ytimg.com/vi/rfscVS0vtbw/mqdefault.jpg',
-      description: 'Complete Python tutorial',
-    ),
-    const YouTubeVideo(
-      videoId: 'PkZNo7MFNFg',
-      title: 'Learn JavaScript - Full Course for Beginners',
-      channelTitle: 'freeCodeCamp.org',
-      thumbnailUrl: 'https://i.ytimg.com/vi/PkZNo7MFNFg/mqdefault.jpg',
-      description: 'Complete JavaScript tutorial',
-    ),
-    const YouTubeVideo(
-      videoId: 'qw--VYLpxG4',
-      title: 'Flutter Tutorial for Beginners',
-      channelTitle: 'Net Ninja',
-      thumbnailUrl: 'https://i.ytimg.com/vi/qw--VYLpxG4/mqdefault.jpg',
-      description: 'Learn Flutter development',
-    ),
-  ];
-
-  static List<YouTubeVideo> studyScience() => [
-    const YouTubeVideo(
-      videoId: 'OWXoRSIxyIU',
-      title: 'Quantum Physics for Beginners',
-      channelTitle: 'Kurzgesagt',
-      thumbnailUrl: 'https://i.ytimg.com/vi/OWXoRSIxyIU/mqdefault.jpg',
-      description: 'Introduction to quantum physics',
-    ),
-    const YouTubeVideo(
-      videoId: 'Xc4xYacTu-E',
-      title: 'Biology: Cell Structure',
-      channelTitle: 'Nucleus Medical Media',
-      thumbnailUrl: 'https://i.ytimg.com/vi/Xc4xYacTu-E/mqdefault.jpg',
-      description: 'Cell biology explained',
-    ),
-    const YouTubeVideo(
-      videoId: 'ZihywtixUYo',
-      title: 'Chemistry: Periodic Table Explained',
-      channelTitle: 'TED-Ed',
-      thumbnailUrl: 'https://i.ytimg.com/vi/ZihywtixUYo/mqdefault.jpg',
-      description: 'Understanding the periodic table',
-    ),
-  ];
-
-  static List<YouTubeVideo> workoutBeginner() => [
-    const YouTubeVideo(
-      videoId: 'UItWltVZZmE',
-      title: '10 Min Beginner Workout - No Equipment',
-      channelTitle: 'FitnessBlender',
-      thumbnailUrl: 'https://i.ytimg.com/vi/UItWltVZZmE/mqdefault.jpg',
-      description: 'Beginner full body workout',
-    ),
-    const YouTubeVideo(
-      videoId: 'cbKkB3POqaY',
-      title: '20 Min Full Body Workout - Beginner',
-      channelTitle: 'MommaStrong',
-      thumbnailUrl: 'https://i.ytimg.com/vi/cbKkB3POqaY/mqdefault.jpg',
-      description: '20 minute beginner workout',
-    ),
-  ];
-
-  static List<YouTubeVideo> workoutHome() => [
-    const YouTubeVideo(
-      videoId: 'oAPCPjnU1wA',
-      title: '30 Min Home Workout - No Equipment',
-      channelTitle: 'POPSUGAR Fitness',
-      thumbnailUrl: 'https://i.ytimg.com/vi/oAPCPjnU1wA/mqdefault.jpg',
-      description: 'Home workout no equipment needed',
-    ),
-    const YouTubeVideo(
-      videoId: 'vc1E5CfRfos',
-      title: 'Full Body Home Workout',
-      channelTitle: 'Chloe Ting',
-      thumbnailUrl: 'https://i.ytimg.com/vi/vc1E5CfRfos/mqdefault.jpg',
-      description: 'Complete home workout routine',
-    ),
-  ];
-
-  static List<YouTubeVideo> workoutAdvanced() => [
-    const YouTubeVideo(
-      videoId: 'U9kFQCpKkAk',
-      title: 'Advanced HIIT Workout - 45 Minutes',
-      channelTitle: 'FitnessBlender',
-      thumbnailUrl: 'https://i.ytimg.com/vi/U9kFQCpKkAk/mqdefault.jpg',
-      description: 'High intensity interval training',
-    ),
-    const YouTubeVideo(
-      videoId: 'ml6cT4AZdqI',
-      title: 'Advanced Strength Training',
-      channelTitle: 'AthleanX',
-      thumbnailUrl: 'https://i.ytimg.com/vi/ml6cT4AZdqI/mqdefault.jpg',
-      description: 'Advanced strength training program',
-    ),
-  ];
 }
