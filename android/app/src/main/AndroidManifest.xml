@@ -1,5 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.taskscheduler.app">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--  package="com.taskscheduler.app" -->
 
     <!-- Internet and network permissions -->
     <uses-permission android:name="android.permission.INTERNET"/>
